@@ -11,7 +11,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-24.10
+  REPO_BRANCH: openwrt-25.12
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -128,8 +128,8 @@ jobs:
         # 1. 发布标签 (Tag)：格式如 v2026.09.22-1830
         TAG_NAME="v$(date +%Y.%m.%d-%H%M)"
         
-        # 2. 固件文件命名：格式如 ImmortalWrt-24.10-Cudy-TR3000-ubootmod-daede-20260922.itb
-        FILE_NAME="ImmortalWrt-24.10-Cudy-TR3000-ubootmod-daede-$(date +\%Y\%m\%d).${EXT}"
+        # 2. 固件文件命名：格式如 ImmortalWrt-25.12-Cudy-TR3000-ubootmod-daede-20260922.itb
+        FILE_NAME="ImmortalWrt-25.12-Cudy-TR3000-ubootmod-daede-$(date +\%Y\%m\%d).${EXT}"
         
         mv "$FIRMWARE" "$FILE_NAME"
         
@@ -142,13 +142,13 @@ jobs:
       with:
         tag_name: ${{ steps.organize.outputs.tag_name }}
         # 3. Releases 页面显示的大标题
-        name: Cudy TR3000 (ubootmod) ImmortalWrt 24.10 daede 双内核固件
+        name: Cudy TR3000 (ubootmod) ImmortalWrt 25.12 daede 双内核固件
         # 4. 发布页面的说明文档
         body: |
           ### 固件构建信息
           * **适配机型**: Cudy TR3000 v1 (MediaTek Filogic 830 / MT7981B)
           * **分区布局**: ubootmod 大分区 (请在 U-Boot Web 界面直接刷入)
-          * **底座源码**: ImmortalWrt 24.10 (Linux 6.6 内核)
+          * **底座源码**: ImmortalWrt 25.12 (Linux 6.6 内核)
           * **分流组件**: daede (原生双核心 dae + daed)
           * **默认地址**: `192.168.1.1`
           * **构建时间**: ${{ steps.organize.outputs.release_date }}
