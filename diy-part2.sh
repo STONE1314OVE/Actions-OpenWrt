@@ -17,6 +17,7 @@ for config in $KERNEL_CONFIG_PATH; do
     echo "CONFIG_BPF_SYSCALL=y" >> "$config"
     echo "CONFIG_BPF_JIT=y" >> "$config"
     echo "CONFIG_CGROUP_BPF=y" >> "$config"
+    echo "CONFIG_NETKIT=y" >> "$config"
     echo "CONFIG_XDP_SOCKETS=y" >> "$config"
     echo "CONFIG_NET_CLS_BPF=y" >> "$config"
     echo "CONFIG_NET_ACT_BPF=y" >> "$config"
