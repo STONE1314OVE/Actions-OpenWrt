@@ -20,7 +20,7 @@ env:
   # 确保使用 ImmortalWrt 仓库
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   # 严格指定 24.10 分支
-  REPO_BRANCH: openwrt-24.10
+  REPO_BRANCH: openwrt-25.12
   # 指向上述我们修改过的配置文件
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
