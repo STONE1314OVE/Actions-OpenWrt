@@ -6,14 +6,13 @@ rm -rf feeds/packages/lang/golang
 git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
 ./scripts/feeds install -f -p packages golang
 
-# 2. 注入经过开机实测验证的安全内核配置（坚决不碰 KPROBES / TRACING）
+# 2. 注入开机验证通过的稳定 eBPF/BTF 底层配置
 KERNEL_CONFIG_PATH="target/linux/mediatek/filogic/config-*"
 
 for config in $KERNEL_CONFIG_PATH; do
     [ -f "$config" ] || continue
     echo "正在修补内核配置文件: $config"
     
-    # --- 原有验证通过的 eBPF/BTF 基础 ---
     echo "CONFIG_BPF=y" >> "$config"
     echo "CONFIG_BPF_SYSCALL=y" >> "$config"
     echo "CONFIG_BPF_JIT=y" >> "$config"
@@ -25,18 +24,6 @@ for config in $KERNEL_CONFIG_PATH; do
     echo "CONFIG_IKHEADERS=y" >> "$config"
     echo "CONFIG_DEBUG_INFO_BTF=y" >> "$config"
     echo "CONFIG_MODULE_SIG=n" >> "$config"
-
-    # --- 新增：Netkit 轻量虚拟网络驱动与套接字诊断支持 ---
-    echo "CONFIG_NETKIT=y" >> "$config"
-    echo "CONFIG_INET_DIAG=y" >> "$config"
-    echo "CONFIG_INET_TCP_DIAG=y" >> "$config"
-    echo "CONFIG_INET_UDP_DIAG=y" >> "$config"
-    echo "CONFIG_XDP_SOCKETS_DIAG=y" >> "$config"
-
-    # --- 新增：启用 TCP BBR 拥塞控制 ---
-    echo "CONFIG_TCP_CONG_BBR=y" >> "$config"
-    echo "CONFIG_DEFAULT_BBR=y" >> "$config"
-    echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> "$config"
 done
 
 # 3. 修复 Aurora 主题的构建冲突
