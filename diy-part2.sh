@@ -52,14 +52,23 @@ uci set system.@system.zram_comp_algo='zstd'
 uci set system.@system.zram_priority='100'
 uci commit system
 
-# Aurora 默认主题生效与清理 Bootstrap
+# 彻底关闭流量分载 (确保 dae 的 eBPF hook 不被硬件 NAT 旁路绕过)
+uci set firewall.@defaults[0].flow_offloading='0'
+uci set firewall.@defaults[0].flow_offloading_hw='0'
+uci commit firewall
+
+# Aurora 默认主题配置
 uci set luci.main.mediaurlbase='/luci-static/aurora'
 uci set luci.main.resourcebase='/luci-static/resources'
 uci set luci.themes.Aurora='/luci-static/aurora'
 uci delete luci.themes.Bootstrap
 uci commit luci
 
-# 网络缓冲区优化与 BBR 双重保险
+# 性能调优：TCP Fast Open、高并发队列与缓冲区优化
+sysctl -w net.ipv4.tcp_fastopen=3
+sysctl -w net.core.netdev_max_backlog=16384
+sysctl -w net.core.somaxconn=4096
+sysctl -w net.ipv4.tcp_max_syn_backlog=8192
 sysctl -w net.ipv4.tcp_rmem='4096 87380 4194304'
 sysctl -w net.ipv4.tcp_wmem='4096 16384 4194304'
 sysctl -w net.ipv4.tcp_congestion_control=bbr
