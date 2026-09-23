@@ -117,44 +117,61 @@ jobs:
       if: (!cancelled())
       run: df -hT
 
-    # 3. 规范化文件名与标签提取
-    - name: 提取并规范化固件文件名
+    # 3. 整理并规范化所有固件格式（同时保留 sysupgrade、initramfs 和校验文件）
+    - name: 整理并规范化所有固件格式
       id: organize
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
         cd openwrt/bin/targets/mediatek/filogic/
+        mkdir -p $GITHUB_WORKSPACE/release
         
-        # 优先捕获 ubootmod 架构下的 itb 固件
-        FIRMWARE=$(ls *cudy*tr3000*ubootmod*.itb 2>/dev/null | head -n 1)
-        [ -z "$FIRMWARE" ] && FIRMWARE=$(ls *cudy*tr3000*ubootmod*sysupgrade.bin 2>/dev/null | head -n 1)
-        [ -z "$FIRMWARE" ] && FIRMWARE=$(ls *sysupgrade.* 2>/dev/null | head -n 1)
+        # 清除散装 ipk 缓存，只保留目标固件文件
+        rm -rf packages
         
-        EXT="${FIRMWARE##*.}"
-        export TZ='Asia/Shanghai'
-        
-        # 规范 Release 标签与固件名称
+        DATE_STR=$(date +%Y%m%d)
         TAG_NAME="v$(date +%Y.%m.%d-%H%M)"
-        FILE_NAME="ImmortalWrt-24.10-Cudy-TR3000-ubootmod-daede-$(date +\%Y\%m\%d).${EXT}"
         
-        mv "$FIRMWARE" "$FILE_NAME"
+        # 遍历所有 TR3000 固件文件，按用途规范命名并归档
+        for file in *cudy*tr3000*; do
+          [ -f "$file" ] || continue
+          
+          if [[ "$file" == *"sysupgrade"* ]]; then
+            EXT="${file##*.}"
+            cp -f "$file" "$GITHUB_WORKSPACE/release/ImmortalWrt-24.10-Cudy-TR3000-ubootmod-sysupgrade-${DATE_STR}.${EXT}"
+          elif [[ "$file" == *"initramfs"* ]]; then
+            EXT="${file##*.}"
+            cp -f "$file" "$GITHUB_WORKSPACE/release/ImmortalWrt-24.10-Cudy-TR3000-ubootmod-recovery-initramfs-${DATE_STR}.${EXT}"
+          else
+            cp -f "$file" "$GITHUB_WORKSPACE/release/"
+          fi
+        done
+        
+        # 复制 sha256 校验和 buildinfo 记录
+        [ -f sha256sums ] && cp -f sha256sums "$GITHUB_WORKSPACE/release/sha256sums-${DATE_STR}.txt"
+        [ -f config.buildinfo ] && cp -f config.buildinfo "$GITHUB_WORKSPACE/release/config.buildinfo"
         
         echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-        echo "firmware_path=openwrt/bin/targets/mediatek/filogic/${FILE_NAME}" >> $GITHUB_OUTPUT
         echo "release_date=$(date +'\%Y-\%m-\%d \%H:\%M')" >> $GITHUB_OUTPUT
+        echo "release_dir=$GITHUB_WORKSPACE/release" >> $GITHUB_OUTPUT
+        
+        echo "=== 即将发布到 Release 的完整固件列表 ==="
+        ls -lh $GITHUB_WORKSPACE/release/
 
-    # 4. 发布至 GitHub Releases
+    # 4. 全量发布至 GitHub Releases
     - name: 发布至 GitHub Releases
       uses: softprops/action-gh-release@v2
       if: steps.compile.outputs.status == 'success' && !cancelled()
       with:
         tag_name: ${{ steps.organize.outputs.tag_name }}
-        name: Cudy TR3000 (ubootmod) ImmortalWrt 25.12 daede 双内核固件
+        name: Cudy TR3000 (ubootmod) ImmortalWrt 24.10 daede 双内核固件
         body: |
-          ### 固件发布说明
-          * **适配设备**: Cudy TR3000 v1 (MediaTek Filogic 830 / MT7981B)
-          * **分区架构**: ubootmod 大分区 (请在 U-Boot Web 控制台刷入)
-          * **系统源码**: ImmortalWrt 25.12 (Linux 6.6 内核)
-          * **核心组件**: 原生 daede 双核心 (dae + daed) 与 Aurora 主题
-          * **默认管理 IP**: `192.168.1.1`
+          ### 固件下载与刷机指南
+          * **适配机型**: Cudy TR3000 v1 (MediaTek MT7981B)
+          * **分区架构**: ubootmod 大分区架构
+          * **文件选刷说明**:
+            * **`*sysupgrade.bin` (推荐日常刷入)**: 完整 SquashFS 正式固件，支持保存配置。直接在 U-Boot Web 刷机后台或现有系统后台上传刷入即可。
+            * **`*recovery-initramfs.itb`**: 内存应急固件，仅在救砖或临时测试时在 U-Boot 中加载。
+            * **`sha256sums-*.txt`**: 文件哈希校验值。
+          * **内核特性**: Linux 6.6、Netkit 点火、TCP BBR、原生 eBPF/BTF
           * **构建时间**: ${{ steps.organize.outputs.release_date }}
-        files: ${{ steps.organize.outputs.firmware_path }}
+        files: ${{ steps.organize.outputs.release_dir }}/*
