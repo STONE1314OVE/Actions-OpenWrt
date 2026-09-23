@@ -11,7 +11,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-24.10
+  REPO_BRANCH: openwrt-25.12
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -65,7 +65,7 @@ jobs:
     - name: 载入配置并执行 DIY-2 修补
       run: |
         [ -e files ] && cp -r files openwrt/files
-        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
+        [ -e $CONFIG_FILE ] && cp -f$CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
@@ -148,12 +148,12 @@ jobs:
       if: steps.compile.outputs.status == 'success' && !cancelled()
       with:
         tag_name: ${{ steps.organize.outputs.tag_name }}
-        name: Cudy TR3000 (ubootmod) ImmortalWrt 24.10 daede 双内核固件
+        name: Cudy TR3000 (ubootmod) ImmortalWrt 25.12 daede 双内核固件
         body: |
           ### 固件发布说明
           * **适配设备**: Cudy TR3000 v1 (MediaTek Filogic 830 / MT7981B)
           * **分区架构**: ubootmod 大分区 (请在 U-Boot Web 控制台刷入)
-          * **系统源码**: ImmortalWrt 24.10 (Linux 6.6 内核)
+          * **系统源码**: ImmortalWrt 25.12 (Linux 6.6 内核)
           * **核心组件**: 原生 daede 双核心 (dae + daed) 与 Aurora 主题
           * **默认管理 IP**: `192.168.1.1`
           * **构建时间**: ${{ steps.organize.outputs.release_date }}
