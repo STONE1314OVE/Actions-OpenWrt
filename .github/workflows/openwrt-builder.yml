@@ -65,7 +65,7 @@ jobs:
     - name: 载入配置并执行 DIY-2 修补
       run: |
         [ -e files ] && cp -r files openwrt/files
-        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
+        [ -e $CONFIG_FILE ] && cp -f$CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
@@ -163,7 +163,7 @@ jobs:
       if: steps.compile.outputs.status == 'success' && !cancelled()
       with:
         tag_name: ${{ steps.organize.outputs.tag_name }}
-        name: Cudy TR3000 (ubootmod) ImmortalWrt 24.10 daede 双内核固件
+        name: Cudy TR3000 (ubootmod) ImmortalWrt 25.12 daede 双内核固件
         body: |
           ### 固件下载与刷机指南
           * **适配机型**: Cudy TR3000 v1 (MediaTek MT7981B)
