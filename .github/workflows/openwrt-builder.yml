@@ -65,7 +65,7 @@ jobs:
     - name: 载入配置并执行 DIY-2 修补
       run: |
         [ -e files ] && cp -r files openwrt/files
-        [ -e $CONFIG_FILE ] && cp -f$CONFIG_FILE openwrt/.config
+        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
