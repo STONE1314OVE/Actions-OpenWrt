@@ -1,3 +1,10 @@
+#
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+
 name: Build OpenWrt for Cudy TR3000
 
 on:
@@ -5,36 +12,40 @@ on:
   workflow_dispatch:
     inputs:
       ssh:
-        description: '开启 SSH 远程调试 (true/false)'
+        description: 'SSH connection to Actions'
         required: false
-        default: 'true'
+        default: 'false'
 
 env:
+  # 确保使用 ImmortalWrt 仓库
   REPO_URL: https://github.com/immortalwrt/immortalwrt
+  # 严格指定 24.10 分支
   REPO_BRANCH: openwrt-24.10
+  # 指向上述我们修改过的配置文件
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    # 必须开启 write 权限，否则无法发布固件也无法将新配置推送回仓库
-    permissions:
-      contents: write
 
     steps:
-    - name: 检出当前仓库
-      uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@main
 
-    - name: 初始化编译环境
+    - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo -E apt-get -qq update
+        # 必须包含 clang llvm lld libelf-dev 用于编译 BPF
         sudo -E apt-get -qq install $(curl -fsSL git.io/depends-ubuntu-2204)
         sudo -E apt-get -qq install clang llvm lld libelf-dev
         sudo -E apt-get -qq autoremove --purge
@@ -43,113 +54,81 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    - name: 拉取源码
+    - name: Clone source code
       working-directory: /workdir
       run: |
+        df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: 执行 DIY-1 脚本注入自定义源
+    - name: Load custom feeds
       run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    - name: 更新与安装 Feeds
-      run: |
-        cd openwrt
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
 
-    - name: 载入基础配置与执行 DIY-2 修补
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Load custom configuration
       run: |
-        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: SSH connection to Actions
+      uses: P3TERX/ssh2actions@v1.0.0
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+      env:
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
         make defconfig
-
-    # 核心：使用稳定版 Upterm 接入 SSH
-    - name: SSH 远程调试 (Upterm)
-      uses: owenthereal/action-upterm@v1.15.0
-      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh != 'false') || contains(github.event.action, 'ssh')
-      with:
-        upterm-version: 'v0.29.0'
-        limit-access-to-actor: true
-
-    # 核心：在 SSH 断开后，自动提取你在云端修改的配置，并推送到你的 GitHub 仓库！
-    - name: 自动保存提取的新配置到仓库
-      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh != 'false') || contains(github.event.action, 'ssh')
-      run: |
-        cd openwrt
-        ./scripts/diffconfig.sh > $GITHUB_WORKSPACE/.config
-        cd $GITHUB_WORKSPACE
-        # 检查配置是否发生变更
-        if ! git diff --quiet .config; then
-          echo "检测到配置有更新，正在推送回仓库..."
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add .config
-          git commit -m "Update .config via SSH Menuconfig"
-          git push
-        else
-          echo "配置未发生变化，跳过推送。"
-        fi
-
-    - name: 预下载依赖
-      run: |
-        cd openwrt
         make download -j8
-        find dl -size -1024c -exec rm -f {} + 2>/dev/null || true
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
 
-    - name: 编译固件
+    - name: Compile the firmware
       id: compile
       run: |
         cd openwrt
-        make -j$(nproc) || make -j1 V=s
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: 提取并重命名固件
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Organize files
       id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/mediatek/filogic/
-        
-        # 自适应捕获 ubootmod 大分区固件
-        FIRMWARE=$(ls *cudy*tr3000*ubootmod*.itb 2>/dev/null | head -n 1)
-        if [ -z "$FIRMWARE" ]; then
-          FIRMWARE=$(ls *cudy*tr3000*ubootmod*sysupgrade.bin 2>/dev/null | head -n 1)
-        fi
-        if [ -z "$FIRMWARE" ]; then
-          FIRMWARE=$(ls *sysupgrade.* 2>/dev/null | head -n 1)
-        fi
-        
-        EXT="${FIRMWARE##*.}"
-        export TZ='Asia/Shanghai'
-        
-        # 1. 发布标签 (Tag)：格式如 v2026.09.22-1830
-        TAG_NAME="v$(date +%Y.%m.%d-%H%M)"
-        
-        # 2. 固件文件命名：格式如 ImmortalWrt-25.12-Cudy-TR3000-ubootmod-daede-20260922.itb
-        FILE_NAME="ImmortalWrt-25.12-Cudy-TR3000-ubootmod-daede-$(date +\%Y\%m\%d).${EXT}"
-        
-        mv "$FIRMWARE" "$FILE_NAME"
-        
-        echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-        echo "firmware_path=openwrt/bin/targets/mediatek/filogic/${FILE_NAME}" >> $GITHUB_OUTPUT
-        echo "release_date=$(date +'\%Y-\%m-\%d \%H:\%M')" >> $GITHUB_OUTPUT
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: 发布至 Releases
-      uses: softprops/action-gh-release@v2
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        tag_name: ${{ steps.organize.outputs.tag_name }}
-        # 3. Releases 页面显示的大标题
-        name: Cudy TR3000 (ubootmod) ImmortalWrt 25.12 daede 双内核固件
-        # 4. 发布页面的说明文档
-        body: |
-          ### 固件构建信息
-          * **适配机型**: Cudy TR3000 v1 (MediaTek Filogic 830 / MT7981B)
-          * **分区布局**: ubootmod 大分区 (请在 U-Boot Web 界面直接刷入)
-          * **底座源码**: ImmortalWrt 25.12 (Linux 6.6 内核)
-          * **分流组件**: daede (原生双核心 dae + daed)
-          * **默认地址**: `192.168.1.1`
-          * **构建时间**: ${{ steps.organize.outputs.release_date }}
-        files: ${{ steps.organize.outputs.firmware_path }}
+        name: OpenWrt_firmware
+        path: ${{ env.FIRMWARE }}
+
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@v1
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        tag_name: ${{ github.run_number }}
+        files: ${{ env.FIRMWARE }}/*
