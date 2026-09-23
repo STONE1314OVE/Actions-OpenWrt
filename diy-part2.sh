@@ -6,18 +6,18 @@ rm -rf feeds/packages/lang/golang
 git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
 ./scripts/feeds install -f -p packages golang
 
-# 2. 注入开机验证通过的稳定 eBPF/BTF 底层配置
+# 2. 注入经过开机实测验证的安全内核配置 + Netkit 物理点火
 KERNEL_CONFIG_PATH="target/linux/mediatek/filogic/config-*"
 
 for config in $KERNEL_CONFIG_PATH; do
     [ -f "$config" ] || continue
     echo "正在修补内核配置文件: $config"
     
+    # 稳定 eBPF/BTF 基础
     echo "CONFIG_BPF=y" >> "$config"
     echo "CONFIG_BPF_SYSCALL=y" >> "$config"
     echo "CONFIG_BPF_JIT=y" >> "$config"
     echo "CONFIG_CGROUP_BPF=y" >> "$config"
-    echo "CONFIG_NETKIT=y" >> "$config"
     echo "CONFIG_XDP_SOCKETS=y" >> "$config"
     echo "CONFIG_NET_CLS_BPF=y" >> "$config"
     echo "CONFIG_NET_ACT_BPF=y" >> "$config"
@@ -25,6 +25,9 @@ for config in $KERNEL_CONFIG_PATH; do
     echo "CONFIG_IKHEADERS=y" >> "$config"
     echo "CONFIG_DEBUG_INFO_BTF=y" >> "$config"
     echo "CONFIG_MODULE_SIG=n" >> "$config"
+
+    # 核心：Netkit 虚拟网络设备驱动 (BPF-programmable network device)
+    echo "CONFIG_NETKIT=y" >> "$config"
 done
 
 # 3. 修复 Aurora 主题的构建冲突
@@ -52,14 +55,19 @@ uci set luci.themes.Aurora='/luci-static/aurora'
 uci delete luci.themes.Bootstrap
 uci commit luci
 
-# 性能调优：TCP Fast Open、高并发队列与缓冲区优化
-sysctl -w net.ipv4.tcp_fastopen=3
-sysctl -w net.core.netdev_max_backlog=16384
-sysctl -w net.core.somaxconn=4096
-sysctl -w net.ipv4.tcp_max_syn_backlog=8192
-sysctl -w net.ipv4.tcp_rmem='4096 87380 4194304'
-sysctl -w net.ipv4.tcp_wmem='4096 16384 4194304'
-sysctl -w net.ipv4.tcp_congestion_control=bbr
+# 写入 sysctl.conf，确保每次重启 BBR 与网络调优永久生效
+cat >> /etc/sysctl.conf <<SYSCTL_EOF
+net.ipv4.tcp_congestion_control = bbr
+net.core.default_qdisc = fq
+net.ipv4.tcp_fastopen = 3
+net.core.netdev_max_backlog = 16384
+net.core.somaxconn = 4096
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_rmem = 4096 87380 4194304
+net.ipv4.tcp_wmem = 4096 16384 4194304
+SYSCTL_EOF
+
+sysctl -p
 
 exit 0
 EOF
