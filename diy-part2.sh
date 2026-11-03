@@ -1,10 +1,15 @@
 #!/bin/bash
 # Description: OpenWrt DIY script part 2 (After Update feeds)
 
-# 1. 升级 Go 编译器至 1.26+ 分支 (dae 核心编译必备，解决 simd 报错)
+# 1. 升级 Go 编译器并解除 GOTOOLCHAIN=local 限制 (解决 dae 要求 go >= 1.27.0 报错)
 rm -rf feeds/packages/lang/golang
+git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 27.x feeds/packages/lang/golang || \
 git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
 ./scripts/feeds install -f -p packages golang
+
+# 允许 Go 工具链在需要更高版本时自动拉取对应版本，并在编译前自动对齐 go.mod 版本号
+sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' feeds/packages/lang/golang/golang-build.sh
+find package/ feeds/ -path "*/dae/Makefile" -exec sed -i '/Build\/Compile/a \\t$(SED) "s/^go 1\\.27.*/go 1.26/g" $(PKG_BUILD_DIR)/go.mod $(PKG_BUILD_DIR)/*/go.mod 2>/dev/null || true' {} +
 
 # 2. 注入经过开机实测验证的安全内核配置 + Netkit 物理点火
 KERNEL_CONFIG_PATH="target/linux/mediatek/filogic/config-*"
@@ -33,14 +38,34 @@ done
 # 3. 修复 Aurora 主题的构建冲突
 sed -i 's/npm install/npm install --legacy-peer-deps/g' package/luci-theme-aurora/Makefile
 
-# 4. 系统初始化定制 (UCI Defaults)
+# 4. 预置 luci-app-daede 的 rpcd 读写权限白名单（解决网页保存配置提示无权限）
+mkdir -p files/usr/share/rpcd/acl.d
+cat > files/usr/share/rpcd/acl.d/luci-app-daede-fix.json <<EOF
+{
+  "luci-app-daede": {
+    "description": "Grant file access to dae config",
+    "read": {
+      "file": {
+        "/etc/dae/*": [ "read" ]
+      }
+    },
+    "write": {
+      "file": {
+        "/etc/dae/*": [ "write" ]
+      }
+    }
+  }
+}
+EOF
+
+# 5. 系统初始化定制 (UCI Defaults)
 mkdir -p files/etc/uci-defaults
 cat > files/etc/uci-defaults/99-custom-settings <<EOF
 
-# 内存 ZRAM 压缩配置 (96MB zstd)
-uci set system.@system.zram_size_mb='96'
-uci set system.@system.zram_comp_algo='zstd'
-uci set system.@system.zram_priority='100'
+# 内存 ZRAM 压缩配置 (256MB lz4 满血低延迟方案)
+uci set system.@system[0].zram_size_mb='256'
+uci set system.@system[0].zram_comp_algo='lz4'
+uci set system.@system[0].zram_priority='100'
 uci commit system
 
 # 彻底关闭流量分载 (确保 dae 的 eBPF hook 不被硬件 NAT 旁路绕过)
