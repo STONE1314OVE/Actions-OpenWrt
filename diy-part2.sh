@@ -1,15 +1,13 @@
 #!/bin/bash
 # Description: OpenWrt DIY script part 2 (After Update feeds)
 
-# 1. 升级 Go 编译器并解除 GOTOOLCHAIN=local 限制 (解决 dae 要求 go >= 1.27.0 报错)
+# 1. 升级 Go 编译器并彻底解除 GOTOOLCHAIN=local 限制
 rm -rf feeds/packages/lang/golang
-git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 27.x feeds/packages/lang/golang || \
 git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
 ./scripts/feeds install -f -p packages golang
 
-# 允许 Go 工具链在需要更高版本时自动拉取对应版本，并在编译前自动对齐 go.mod 版本号
-sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' feeds/packages/lang/golang/golang-build.sh
-find package/ feeds/ -path "*/dae/Makefile" -exec sed -i '/Build\/Compile/a \\t$(SED) "s/^go 1\\.27.*/go 1.26/g" $(PKG_BUILD_DIR)/go.mod $(PKG_BUILD_DIR)/*/go.mod 2>/dev/null || true' {} +
+# 核心修复：将 golang 目录下所有配置中的 GOTOOLCHAIN=local 替换为 auto，允许自动拉取 go 1.27+
+grep -rl "GOTOOLCHAIN=local" feeds/packages/lang/golang/ | xargs sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g'
 
 # 2. 注入经过开机实测验证的安全内核配置 + Netkit 物理点火
 KERNEL_CONFIG_PATH="target/linux/mediatek/filogic/config-*"
