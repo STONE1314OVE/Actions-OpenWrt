@@ -1,4 +1,4 @@
-name: Build OpenWrt for Cudy TR3000
+name: Build OpenWrt for Cudy TR3000 (Honk)
 
 on:
   repository_dispatch:
@@ -35,7 +35,7 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install $(curl -fsSL git.io/depends-ubuntu-2204)
-        sudo -E apt-get -qq install clang llvm lld libelf-dev
+        sudo -E apt-get -qq install clang llvm lld libelf-dev jq
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -46,12 +46,12 @@ jobs:
       working-directory: /workdir
       run: |
         df -hT $PWD
-        git clone $REPO_URL -b$REPO_BRANCH openwrt
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     - name: 加载自定义源
       run: |
-        [ -e $FEEDS_CONF ] && mv$FEEDS_CONF openwrt/feeds.conf.default
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
@@ -125,7 +125,7 @@ jobs:
         cd openwrt/bin/targets/mediatek/filogic/
         mkdir -p $GITHUB_WORKSPACE/release
         
-        # 清除散装 ipk 缓存，只保留目标固件文件
+        # 清除散装包缓存，只保留目标固件文件
         rm -rf packages
         
         DATE_STR=$(date +%Y%m%d)
@@ -137,10 +137,10 @@ jobs:
           
           if [[ "$file" == *"sysupgrade"* ]]; then
             EXT="${file##*.}"
-            cp -f "$file" "$GITHUB_WORKSPACE/release/ImmortalWrt-24.10-Cudy-TR3000-ubootmod-sysupgrade-${DATE_STR}.${EXT}"
+            cp -f "$file" "$GITHUB_WORKSPACE/release/ImmortalWrt-25.12-Cudy-TR3000-ubootmod-honk-sysupgrade-${DATE_STR}.${EXT}"
           elif [[ "$file" == *"initramfs"* ]]; then
             EXT="${file##*.}"
-            cp -f "$file" "$GITHUB_WORKSPACE/release/ImmortalWrt-24.10-Cudy-TR3000-ubootmod-recovery-initramfs-${DATE_STR}.${EXT}"
+            cp -f "$file" "$GITHUB_WORKSPACE/release/ImmortalWrt-25.12-Cudy-TR3000-ubootmod-honk-recovery-initramfs-${DATE_STR}.${EXT}"
           else
             cp -f "$file" "$GITHUB_WORKSPACE/release/"
           fi
@@ -151,7 +151,7 @@ jobs:
         [ -f config.buildinfo ] && cp -f config.buildinfo "$GITHUB_WORKSPACE/release/config.buildinfo"
         
         echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-        echo "release_date=$(date +'\%Y-\%m-\%d \%H:\%M')" >> $GITHUB_OUTPUT
+        echo "release_date=$(date +'%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
         echo "release_dir=$GITHUB_WORKSPACE/release" >> $GITHUB_OUTPUT
         
         echo "=== 即将发布到 Release 的完整固件列表 ==="
@@ -163,15 +163,16 @@ jobs:
       if: steps.compile.outputs.status == 'success' && !cancelled()
       with:
         tag_name: ${{ steps.organize.outputs.tag_name }}
-        name: Cudy TR3000 (ubootmod) ImmortalWrt 25.12 daede 双内核固件
+        name: Cudy TR3000 (ubootmod) ImmortalWrt 25.12 Honk (Rust eBPF) 固件
         body: |
           ### 固件下载与刷机指南
           * **适配机型**: Cudy TR3000 v1 (MediaTek MT7981B)
           * **分区架构**: ubootmod 大分区架构
+          * **核心代理**: Honk (Rust 重写 eBPF 透明代理) + Doona Web 面板 + luci-app-honk
           * **文件选刷说明**:
-            * **`*sysupgrade.bin` (推荐日常刷入)**: 完整 SquashFS 正式固件，支持保存配置。直接在 U-Boot Web 刷机后台或现有系统后台上传刷入即可。
+            * **`*sysupgrade.bin` (推荐日常刷入)**: 完整 SquashFS 正式固件，支持保存配置。
             * **`*recovery-initramfs.itb`**: 内存应急固件，仅在救砖或临时测试时在 U-Boot 中加载。
             * **`sha256sums-*.txt`**: 文件哈希校验值。
-          * **内核特性**: Linux 6.6、Netkit 点火、TCP BBR、原生 eBPF/BTF
+          * **内核特性**: Linux 6.12、Netkit 点火、NFT_QUEUE、TCP BBR、原生 eBPF/BTF
           * **构建时间**: ${{ steps.organize.outputs.release_date }}
         files: ${{ steps.organize.outputs.release_dir }}/*
