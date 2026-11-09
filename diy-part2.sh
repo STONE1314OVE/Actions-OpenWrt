@@ -1,5 +1,6 @@
 #!/bin/bash
 # Description: OpenWrt DIY script part 2 (After Update feeds)
+set -e
 
 # 1. 卸载 feeds 中可能存在的 dae / daed 冲突包
 ./scripts/feeds uninstall dae daed luci-app-dae luci-app-daed luci-app-daede 2>/dev/null || true
@@ -11,7 +12,6 @@ for config in $KERNEL_CONFIG_PATH; do
     [ -f "$config" ] || continue
     echo "正在修补内核配置文件: $config"
     
-    # 稳定 eBPF/BTF 基础
     echo "CONFIG_BPF=y" >> "$config"
     echo "CONFIG_BPF_SYSCALL=y" >> "$config"
     echo "CONFIG_BPF_JIT=y" >> "$config"
@@ -23,7 +23,7 @@ for config in $KERNEL_CONFIG_PATH; do
     echo "CONFIG_DEBUG_INFO_BTF=y" >> "$config"
     echo "CONFIG_MODULE_SIG=n" >> "$config"
 
-    # 核心：Netkit 虚拟网络设备驱动与 nftables 队列支持（Honk 必备）
+    # Netkit 与 nftables 队列支持（Honk 必备）
     echo "CONFIG_NETKIT=y" >> "$config"
     echo "CONFIG_NETFILTER_NETLINK_QUEUE=y" >> "$config"
     echo "CONFIG_NFT_QUEUE=y" >> "$config"
@@ -32,23 +32,44 @@ done
 # 3. 修复 Aurora 主题的构建冲突
 sed -i 's/npm install/npm install --legacy-peer-deps/g' package/luci-theme-aurora/Makefile
 
-# 4. 自动获取 kenzok8/openwrt-honk 最新 Release (aarch64_cortex-a53) 并预置进固件 files/
-echo "=== 正在拉取最新 kenzok8/openwrt-honk (aarch64_cortex-a53) 软件包 ==="
-mkdir -p /tmp/honk_extract files
-HONK_URLS=$(curl -sL https://api.github.com/repos/kenzok8/openwrt-honk/releases/latest | grep browser_download_url | grep 'aarch64_cortex-a53\.apk"' | cut -d '"' -f 4)
+# 4. 使用 GitHub 官方 CLI 鉴权下载最新 kenzok8/openwrt-honk 软件包（防 403 限流）
+echo "=== 正在从 kenzok8/openwrt-honk 下载最新 Release 安装包 ==="
+rm -rf honk_apks
+mkdir -p honk_apks files
 
-for url in $HONK_URLS; do
-    pkg_name=$(basename "$url")
-    echo "下载并解包: $pkg_name"
-    curl -fL "$url" -o "/tmp/honk_extract/$pkg_name"
-    # 解压 APK 数据层到 files/ 目录，并清理 APK 元数据头
-    tar -xzf "/tmp/honk_extract/$pkg_name" -C files/ 2>/dev/null || true
-    rm -f files/.PKGINFO files/.SIGN.* files/.pre-* files/.post-* files/.trigger* 2>/dev/null || true
+gh release download -R kenzok8/openwrt-honk \
+    --pattern "*aarch64_cortex-a53.apk" \
+    --pattern "*luci-app-honk*.apk" \
+    --dir honk_apks --clobber
+
+echo "=== 已下载的 Honk 软件包列表 ==="
+ls -lh honk_apks/*.apk
+
+# 在 package/Makefile 的 rootfs-prepare 阶段挂载 OpenWrt 原生 APKv3 解包钩子并强校验
+cat << 'EOF' > honk_apks/extract_honk.sh
+#!/bin/sh
+set -e
+TOPDIR="$1"
+APK_BIN="$2"
+mkdir -p "$TOPDIR/files"
+cd "$TOPDIR/files"
+for pkg in "$TOPDIR"/honk_apks/*.apk; do
+    echo ">>> 正在使用原生 apk 工具解包: $pkg"
+    "$APK_BIN" extract --allow-untrusted "$pkg" || tar -xzf "$pkg" -C "$TOPDIR/files"
 done
-rm -rf /tmp/honk_extract
+rm -f "$TOPDIR/files/.PKGINFO" "$TOPDIR/files"/.SIGN.* "$TOPDIR/files"/.pre-* "$TOPDIR/files"/.post-* "$TOPDIR/files"/.trigger* 2>/dev/null || true
+chmod -R 755 "$TOPDIR/files/etc/init.d/honk" "$TOPDIR/files/usr/bin/honk"* "$TOPDIR/files/usr/share/honk" "$TOPDIR/files/usr/libexec/rpcd" 2>/dev/null || true
 
-# 赋予 Honk 核心、服务脚本、RPCD 接口与维护脚本完整可执行权限
-chmod -R 755 files/etc/init.d/honk files/usr/bin/honk* files/usr/share/honk files/usr/libexec/rpcd 2>/dev/null || true
+# 强制校验核心文件是否真正写入 files/，防止打出空壳固件
+if [ ! -f "$TOPDIR/files/etc/init.d/honk" ] && [ ! -f "$TOPDIR/files/usr/bin/honk-core" ]; then
+    echo "❌ 错误：Honk 核心文件未成功解包到 files/ 目录，终止构建！"
+    exit 1
+fi
+echo "✅ Honk 与 Doona 资产已成功注入 rootfs！"
+EOF
+chmod +x honk_apks/extract_honk.sh
+
+sed -i '/\$(call prepare_rootfs,\$(TARGET_DIR),\$(TOPDIR)\/files)/i \\t\$(TOPDIR)/honk_apks/extract_honk.sh "\$(TOPDIR)" "\$(STAGING_DIR_HOST)/bin/apk"' package/Makefile
 
 # 5. 系统初始化定制 (UCI Defaults)
 mkdir -p files/etc/uci-defaults
@@ -73,8 +94,8 @@ uci set luci.themes.Aurora='/luci-static/aurora'
 uci delete luci.themes.Bootstrap 2>/dev/null || true
 uci commit luci
 
-# 再次确保 Honk 维护脚本与核心具备可执行权限，并清理 LuCI 缓存
-chmod 755 /etc/init.d/honk /usr/bin/honk-core /usr/share/honk/*.sh /usr/libexec/rpcd/* 2>/dev/null || true
+# 确保 Honk 维护脚本与核心具备可执行权限，并清理 LuCI 缓存
+chmod 755 /etc/init.d/honk /usr/bin/honk* /usr/share/honk/*.sh /usr/libexec/rpcd/* 2>/dev/null || true
 rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 
 # 写入 sysctl.conf，确保每次重启 BBR 与网络调优永久生效
