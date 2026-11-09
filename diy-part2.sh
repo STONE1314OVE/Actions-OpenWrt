@@ -32,35 +32,39 @@ done
 # 3. 修复 Aurora 主题的构建冲突
 sed -i 's/npm install/npm install --legacy-peer-deps/g' package/luci-theme-aurora/Makefile
 
-# 4. 使用 GitHub 官方 CLI 鉴权下载最新 kenzok8/openwrt-honk 软件包（防 403 限流）
+# 4. 使用 GitHub 官方 CLI 鉴权仅下载 aarch64_cortex-a53 架构的 honk 与 luci-app-honk
 echo "=== 正在从 kenzok8/openwrt-honk 下载最新 Release 安装包 ==="
 rm -rf honk_apks
 mkdir -p honk_apks files
 
 gh release download -R kenzok8/openwrt-honk \
     --pattern "*aarch64_cortex-a53.apk" \
-    --pattern "*luci-app-honk*.apk" \
     --dir honk_apks --clobber
 
 echo "=== 已下载的 Honk 软件包列表 ==="
 ls -lh honk_apks/*.apk
 
-# 在 package/Makefile 的 rootfs-prepare 阶段挂载 OpenWrt 原生 APKv3 解包钩子并强校验
+# 在 package/Makefile 的 rootfs-prepare 阶段挂载原生 APKv3 解包钩子（解压至独立空目录再合并，彻底规避 File exists）
 cat << 'EOF' > honk_apks/extract_honk.sh
 #!/bin/sh
 set -e
 TOPDIR="$1"
 APK_BIN="$2"
 mkdir -p "$TOPDIR/files"
-cd "$TOPDIR/files"
+
 for pkg in "$TOPDIR"/honk_apks/*.apk; do
     echo ">>> 正在使用原生 apk 工具解包: $pkg"
-    "$APK_BIN" extract --allow-untrusted "$pkg" || tar -xzf "$pkg" -C "$TOPDIR/files"
+    TMP_DIR=$(mktemp -d)
+    "$APK_BIN" extract --allow-untrusted --overwrite --destination "$TMP_DIR" "$pkg" 2>/dev/null || \
+        (cd "$TMP_DIR" && "$APK_BIN" extract --allow-untrusted "$pkg")
+    rm -f "$TMP_DIR/.PKGINFO" "$TMP_DIR"/.SIGN.* "$TMP_DIR"/.pre-* "$TMP_DIR"/.post-* "$TMP_DIR"/.trigger* 2>/dev/null || true
+    cp -rf "$TMP_DIR"/. "$TOPDIR/files/"
+    rm -rf "$TMP_DIR"
 done
-rm -f "$TOPDIR/files/.PKGINFO" "$TOPDIR/files"/.SIGN.* "$TOPDIR/files"/.pre-* "$TOPDIR/files"/.post-* "$TOPDIR/files"/.trigger* 2>/dev/null || true
+
 chmod -R 755 "$TOPDIR/files/etc/init.d/honk" "$TOPDIR/files/usr/bin/honk"* "$TOPDIR/files/usr/share/honk" "$TOPDIR/files/usr/libexec/rpcd" 2>/dev/null || true
 
-# 强制校验核心文件是否真正写入 files/，防止打出空壳固件
+# 强制校验核心文件是否真正写入 files/
 if [ ! -f "$TOPDIR/files/etc/init.d/honk" ] && [ ! -f "$TOPDIR/files/usr/bin/honk-core" ]; then
     echo "❌ 错误：Honk 核心文件未成功解包到 files/ 目录，终止构建！"
     exit 1
