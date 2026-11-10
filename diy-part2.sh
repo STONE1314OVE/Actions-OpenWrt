@@ -11,7 +11,7 @@ KERNEL_CONFIG_PATH="target/linux/mediatek/filogic/config-*"
 for config in $KERNEL_CONFIG_PATH; do
     [ -f "$config" ] || continue
     echo "正在修补内核配置文件: $config"
-    
+
     sed -i '/CONFIG_NET_CLS_BPF=/d; /CONFIG_NET_ACT_BPF=/d; /CONFIG_NFT_QUEUE=/d; /CONFIG_NETFILTER_NETLINK_QUEUE=/d' "$config"
 
     echo "CONFIG_BPF=y" >> "$config"
@@ -33,13 +33,16 @@ for config in $KERNEL_CONFIG_PATH; do
     echo "CONFIG_MODULE_SIG=n" >> "$config"
 done
 
-# 3. 强制锁定 Honk 依赖的四大 kmod 模块到 .config
+# 3. 强制锁定 Honk 依赖的四大 kmod 模块以及 coreutils-stat / sqlite3-cli 到 .config
 cat >> .config << 'EOF'
 CONFIG_KERNEL_NET_NS=y
 CONFIG_KERNEL_FUNCTION_TRACER=y
 CONFIG_KERNEL_DYNAMIC_FTRACE=y
 CONFIG_PACKAGE_ca-bundle=y
 CONFIG_PACKAGE_cgi-io=y
+CONFIG_PACKAGE_coreutils=y
+CONFIG_PACKAGE_coreutils-stat=y
+CONFIG_PACKAGE_sqlite3-cli=y
 CONFIG_PACKAGE_kmod-sched-core=y
 CONFIG_PACKAGE_kmod-sched-bpf=y
 CONFIG_PACKAGE_kmod-veth=y
@@ -79,17 +82,26 @@ echo "aarch64_cortex-a53" > "$TARGET_DIR/etc/apk/arch"
 # 为 honk_apks 生成标准 packages.adb 索引
 "$APK_BIN" mkndx --allow-untrusted --output "$TOPDIR/honk_apks/packages.adb" "$TOPDIR"/honk_apks/*.apk
 
-# 收集所有本地已编译包的 packages.adb 路径（严禁带 file:// 前缀）
+# 收集所有本地已编译包的 packages.adb 路径
 REPO_ARGS="--repository $TOPDIR/honk_apks/packages.adb"
 for adb in $(find "$TOPDIR/staging_dir/packages" "$TOPDIR/bin" -name "packages.adb" 2>/dev/null); do
     REPO_ARGS="$REPO_ARGS --repository $adb"
 done
 
-# 执行原生 apk add 写入完整的 C: 校验头与 installed 数据库
-"$APK_BIN" --root "$TARGET_DIR" --arch aarch64_cortex-a53 \
+# 优先使用本地编译源执行原生 apk add；若未来上游新增未勾选依赖，自动附加上游源兜底拉取
+if ! "$APK_BIN" --root "$TARGET_DIR" --arch aarch64_cortex-a53 \
     --repositories-file /dev/null $REPO_ARGS \
     --no-cache --no-logfile --preserve-env --allow-untrusted \
-    add --no-scripts --force-overwrite honk luci-app-honk
+    add --no-scripts --force-overwrite honk luci-app-honk; then
+    echo ">>> 检测到额外依赖项，正在启用 ImmortalWrt 25.12 上游软件源补齐依赖..."
+    "$APK_BIN" --root "$TARGET_DIR" --arch aarch64_cortex-a53 \
+        $REPO_ARGS \
+        --repository https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/packages/packages.adb \
+        --repository https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/base/packages.adb \
+        --repository https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/luci/packages.adb \
+        --no-cache --no-logfile --preserve-env --allow-untrusted \
+        add --no-scripts --force-overwrite honk luci-app-honk
+fi
 
 echo ">>> 正在向 rootfs 注入 Honk 在线更新 APK 软件源与 ECDSA 验签公钥..."
 mkdir -p "$TARGET_DIR/etc/apk/keys" "$TARGET_DIR/etc/apk/repositories.d"
