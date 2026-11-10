@@ -52,8 +52,8 @@ EOF
 # 4. 修复 Aurora 主题的构建冲突
 sed -i 's/npm install/npm install --legacy-peer-deps/g' package/luci-theme-aurora/Makefile
 
-# 5. 下载 aarch64_cortex-a53 架构的 honk 与 luci-app-honk，并拉取官方软件源脚本
-echo "=== 正在从 kenzok8/openwrt-honk 下载最新 Release 安装包与软件源脚本 ==="
+# 5. 下载 aarch64_cortex-a53 架构的 honk 与 luci-app-honk，并重命名为标准 APKv3 文件名 (<pkg>-<ver>.apk)
+echo "=== 正在从 kenzok8/openwrt-honk 下载最新 Release 安装包 ==="
 rm -rf honk_apks
 mkdir -p honk_apks files/usr/share/honk
 
@@ -61,10 +61,14 @@ gh release download -R kenzok8/openwrt-honk \
     --pattern "*aarch64_cortex-a53.apk" \
     --dir honk_apks --clobber
 
+for f in honk_apks/*-aarch64_cortex-a53.apk; do
+    [ -f "$f" ] && mv -f "$f" "${f%-aarch64_cortex-a53.apk}.apk"
+done
+
 curl -fsSL https://down.dllkids.xyz/openwrt-feed/openwrt-feed-setup.sh -o files/usr/share/honk/openwrt-feed-setup.sh
 chmod 755 files/usr/share/honk/openwrt-feed-setup.sh
 
-echo "=== 已下载的 Honk 软件包列表 ==="
+echo "=== 已规范化命名的 Honk 软件包列表 ==="
 ls -lh honk_apks/*.apk
 
 # 6. 在 rootfs 阶段构建本地 APKv3 索引并通过原生 apk add 正式安装
@@ -79,8 +83,11 @@ echo ">>> 正在生成 Honk 本地 APKv3 索引并执行原生安装..."
 mkdir -p "$TARGET_DIR/etc/apk"
 echo "aarch64_cortex-a53" > "$TARGET_DIR/etc/apk/arch"
 
-# 为 honk_apks 生成标准 packages.adb 索引
-"$APK_BIN" mkndx --allow-untrusted --output "$TOPDIR/honk_apks/packages.adb" "$TOPDIR"/honk_apks/*.apk
+# 进入 honk_apks 目录以相对文件名生成 packages.adb，并建立架构子目录软链接兼容所有寻址模式
+cd "$TOPDIR/honk_apks"
+ln -sfn . aarch64_cortex-a53
+"$APK_BIN" mkndx --allow-untrusted --output packages.adb *.apk
+cd "$TOPDIR"
 
 # 收集所有本地已编译包的 packages.adb 路径
 REPO_ARGS="--repository $TOPDIR/honk_apks/packages.adb"
@@ -88,20 +95,15 @@ for adb in $(find "$TOPDIR/staging_dir/packages" "$TOPDIR/bin" -name "packages.a
     REPO_ARGS="$REPO_ARGS --repository $adb"
 done
 
-# 优先使用本地编译源执行原生 apk add；若未来上游新增未勾选依赖，自动附加上游源兜底拉取
-if ! "$APK_BIN" --root "$TARGET_DIR" --arch aarch64_cortex-a53 \
+# 直接传入本地 .apk 文件路径完成安装（或从已对齐文件名的本地索引安装）
+"$APK_BIN" --root "$TARGET_DIR" --arch aarch64_cortex-a53 \
     --repositories-file /dev/null $REPO_ARGS \
     --no-cache --no-logfile --preserve-env --allow-untrusted \
-    add --no-scripts --force-overwrite honk luci-app-honk; then
-    echo ">>> 检测到额外依赖项，正在启用 ImmortalWrt 25.12 上游软件源补齐依赖..."
-    "$APK_BIN" --root "$TARGET_DIR" --arch aarch64_cortex-a53 \
-        $REPO_ARGS \
-        --repository https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/packages/packages.adb \
-        --repository https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/base/packages.adb \
-        --repository https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/luci/packages.adb \
-        --no-cache --no-logfile --preserve-env --allow-untrusted \
-        add --no-scripts --force-overwrite honk luci-app-honk
-fi
+    add --no-scripts --force-overwrite "$TOPDIR"/honk_apks/*.apk || \
+"$APK_BIN" --root "$TARGET_DIR" --arch aarch64_cortex-a53 \
+    --repositories-file /dev/null $REPO_ARGS \
+    --no-cache --no-logfile --preserve-env --allow-untrusted \
+    add --no-scripts --force-overwrite honk luci-app-honk
 
 echo ">>> 正在向 rootfs 注入 Honk 在线更新 APK 软件源与 ECDSA 验签公钥..."
 mkdir -p "$TARGET_DIR/etc/apk/keys" "$TARGET_DIR/etc/apk/repositories.d"
